@@ -3,6 +3,7 @@ N-BEATS
 -------
 """
 
+import os
 from enum import Enum
 from typing import NewType
 
@@ -225,6 +226,32 @@ class _Block(nn.Module):
         y_hat = y_hat.reshape(x.shape[0], self.target_length, self.nr_params)
 
         return x_hat, y_hat
+
+
+def _install_opt_block_forward():
+    if os.environ.get("DARTS_OPT_1", "1") != "1":
+        return
+    if not (hasattr(torch, "compile") and torch.cuda.is_available()):
+        return
+    eager = _Block.forward
+    try:
+        compiled = torch.compile(eager)
+    except Exception:
+        return
+    live = {"compiled": True}
+
+    def forward(self, x):
+        if live["compiled"]:
+            try:
+                return compiled(self, x)
+            except Exception:
+                live["compiled"] = False
+        return eager(self, x)
+
+    _Block.forward = forward
+
+
+_install_opt_block_forward()
 
 
 class _Stack(nn.Module):

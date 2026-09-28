@@ -6,6 +6,8 @@ Contains abstract classes for deterministic and probabilistic PyTorch Lightning 
 """
 
 import copy
+import inspect
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from functools import wraps
@@ -71,6 +73,25 @@ def io_processor(forward):
             return self.rin.inverse(out)
 
     return forward_wrapper
+
+
+def _want_opt_optimizer(optimizer_cls, optimizer_kws, params) -> bool:
+    if os.environ.get("DARTS_OPT_2", "1") != "1":
+        return False
+    if "fused" in optimizer_kws or "foreach" in optimizer_kws:
+        return False
+    try:
+        if "fused" not in inspect.signature(optimizer_cls).parameters:
+            return False
+    except (TypeError, ValueError):
+        return False
+    try:
+        ps = list(params)
+    except TypeError:
+        return False
+    return bool(ps) and all(
+        p.is_cuda and p.dtype.is_floating_point for p in ps
+    )
 
 
 class PLForecastingModule(pl.LightningModule, ABC):
@@ -496,7 +517,17 @@ class PLForecastingModule(pl.LightningModule, ABC):
         optimizer_kws = {k: v for k, v in self.optimizer_kwargs.items()}
         optimizer_kws["params"] = self.parameters()
 
-        optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
+        _opt_on = _want_opt_optimizer(self.optimizer_cls, optimizer_kws, self.parameters())
+        if _opt_on:
+            optimizer_kws["fused"] = True
+        try:
+            optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
+        except Exception:
+            if not _opt_on:
+                raise
+            optimizer_kws.pop("fused", None)
+            optimizer_kws["params"] = self.parameters()
+            optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
 
         if self.lr_scheduler_cls is not None:
             lr_sched_kws = {k: v for k, v in self.lr_scheduler_kwargs.items()}

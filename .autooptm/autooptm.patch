@@ -1,0 +1,103 @@
+diff --git a/darts/models/forecasting/nbeats.py b/darts/models/forecasting/nbeats.py
+index 3dcfd1825f388b766749f2ce92b8986fb25cd600..0da1b53ab51c0544a1251c7cb4515d8cb30083f6 100644
+--- a/darts/models/forecasting/nbeats.py
++++ b/darts/models/forecasting/nbeats.py
+@@ -3,6 +3,7 @@ N-BEATS
+ -------
+ """
+ 
++import os
+ from enum import Enum
+ from typing import NewType
+ 
+@@ -227,6 +228,32 @@ class _Block(nn.Module):
+         return x_hat, y_hat
+ 
+ 
++def _install_opt_block_forward():
++    if os.environ.get("DARTS_OPT_1", "1") != "1":
++        return
++    if not (hasattr(torch, "compile") and torch.cuda.is_available()):
++        return
++    eager = _Block.forward
++    try:
++        compiled = torch.compile(eager)
++    except Exception:
++        return
++    live = {"compiled": True}
++
++    def forward(self, x):
++        if live["compiled"]:
++            try:
++                return compiled(self, x)
++            except Exception:
++                live["compiled"] = False
++        return eager(self, x)
++
++    _Block.forward = forward
++
++
++_install_opt_block_forward()
++
++
+ class _Stack(nn.Module):
+     def __init__(
+         self,
+diff --git a/darts/models/forecasting/pl_forecasting_module.py b/darts/models/forecasting/pl_forecasting_module.py
+index 80fef92fd51223c125b714ae607dc3c72df6a431..e9ab9fb25a46c3a2c023edd036c1ca99d566a8a2 100644
+--- a/darts/models/forecasting/pl_forecasting_module.py
++++ b/darts/models/forecasting/pl_forecasting_module.py
+@@ -6,6 +6,8 @@ Contains abstract classes for deterministic and probabilistic PyTorch Lightning
+ """
+ 
+ import copy
++import inspect
++import os
+ from abc import ABC, abstractmethod
+ from collections.abc import Sequence
+ from functools import wraps
+@@ -73,6 +75,25 @@ def io_processor(forward):
+     return forward_wrapper
+ 
+ 
++def _want_opt_optimizer(optimizer_cls, optimizer_kws, params) -> bool:
++    if os.environ.get("DARTS_OPT_2", "1") != "1":
++        return False
++    if "fused" in optimizer_kws or "foreach" in optimizer_kws:
++        return False
++    try:
++        if "fused" not in inspect.signature(optimizer_cls).parameters:
++            return False
++    except (TypeError, ValueError):
++        return False
++    try:
++        ps = list(params)
++    except TypeError:
++        return False
++    return bool(ps) and all(
++        p.is_cuda and p.dtype.is_floating_point for p in ps
++    )
++
++
+ class PLForecastingModule(pl.LightningModule, ABC):
+     @abstractmethod
+     def __init__(
+@@ -496,7 +517,17 @@ class PLForecastingModule(pl.LightningModule, ABC):
+         optimizer_kws = {k: v for k, v in self.optimizer_kwargs.items()}
+         optimizer_kws["params"] = self.parameters()
+ 
+-        optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
++        _opt_on = _want_opt_optimizer(self.optimizer_cls, optimizer_kws, self.parameters())
++        if _opt_on:
++            optimizer_kws["fused"] = True
++        try:
++            optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
++        except Exception:
++            if not _opt_on:
++                raise
++            optimizer_kws.pop("fused", None)
++            optimizer_kws["params"] = self.parameters()
++            optimizer = _create_from_cls_and_kwargs(self.optimizer_cls, optimizer_kws)
+ 
+         if self.lr_scheduler_cls is not None:
+             lr_sched_kws = {k: v for k, v in self.lr_scheduler_kwargs.items()}

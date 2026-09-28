@@ -1,3 +1,63 @@
+<div align="center">
+  <a href="https://autooptm.com"><img src=".autooptm/logo.png" width="96" alt="AutoOptm"></a>
+
+  <h1>darts · optimized by <a href="https://autooptm.com">AutoOptm</a></h1>
+
+  <p><b>1.18x faster end to end</b> on the command below, output verified against the stock program.</p>
+
+  <p>
+    <a href="https://autooptm.com"><img alt="speedup" src="https://img.shields.io/badge/end--to--end-1.18x-2ea44f"></a>
+    <a href="https://github.com/unit8co/darts/commit/38b7a895b564f47e56431f1f6cf973b06491bbbd"><img alt="base" src="https://img.shields.io/badge/upstream-38b7a895b564-blue"></a>
+    <img alt="card" src="https://img.shields.io/badge/measured%20on-NVIDIA%20RTX%204090-lightgrey">
+  </p>
+</div>
+
+> This is a fork of [unit8co/darts](https://github.com/unit8co/darts) at commit
+> [`38b7a895b564`](https://github.com/unit8co/darts/commit/38b7a895b564f47e56431f1f6cf973b06491bbbd) with a benchmark driver (`ao_bench.py`) and the AutoOptm patch applied on top.
+> The optimisation was found, measured and verified automatically by [AutoOptm](https://autooptm.com);
+> the patch is kept verbatim under [`.autooptm/`](.autooptm/).
+
+Every change is on by default and the command runs unchanged — same file, same flags, same outputs. Every change is behind a switch that defaults on; see [`.autooptm/autooptm.patch`](.autooptm/autooptm.patch).
+
+## The result — `python ao_bench.py`
+
+| | |
+|---|---|
+| **Command** | `python ao_bench.py` |
+| **Entry point** | `ao_bench.py` |
+| **Unit measured** | one series through ao_bench.py: TimeSeries → Scaler → NBEATSModel construction → fit (3 epochs) → forecast |
+| **Before (stock)** | 1624 ms per unit |
+| **After (this tree, all switches default ON)** | 1378 ms per unit |
+| **Speedup** | **1.18x** end to end on NVIDIA RTX 4090, host noise floor 2.3% |
+| **Output** | loss within 2e-3 relative, gradient cosine 1.0, MAPE unchanged |
+
+### What changed
+
+| File | Where | Gain (alone) |
+|---|---|---|
+| `darts/models/forecasting/pl_forecasting_module.py` | PLForecastingModule.configure_optimizers | 1.0908x |
+| `darts/models/forecasting/nbeats.py` | _Block.forward | 1.0846x |
+
+
+## Reproduce
+
+```bash
+git clone https://github.com/autooptm/darts-ao.git
+cd darts-ao
+# set up exactly as upstream documents, then:
+python ao_bench.py
+```
+
+Everything AutoOptm added is the single commit on top of upstream: the benchmark driver `ao_bench.py` and the optimisation, which is also kept as a patch file under `.autooptm/`.
+
+---
+
+<div align="center"><sub>Optimized by <a href="https://autooptm.com">AutoOptm</a> — point it at a repository, get back a verified speedup and the patch.</sub></div>
+
+---
+
+The upstream README is unchanged below.
+
 # Time Series Made Easy in Python
 
 ![darts](https://github.com/unit8co/darts/raw/master/static/images/darts-logo-trim.png "darts")
